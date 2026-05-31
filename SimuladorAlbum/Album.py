@@ -14,6 +14,7 @@ TOTAL   = 980
 PER_PACK = 7
 COST    = 1.20
 INIT_PACKS = TOTAL // PER_PACK   # 140
+EXP_PROB_TRIALS = 120
 
 # ─────────────────────── PALETA ───────────────────────────────────
 C = {
@@ -47,34 +48,135 @@ def get_dups(col):
 def exchange_round(parts):
     n = len(parts)
     swaps = 0
-    changed = True
 
-    while changed:
-        changed = False
+    while True:
+        missing_sets = [set(np.where(p == 0)[0]) for p in parts]
+        dups_sets = [set(np.where(p > 1)[0]) for p in parts]
+
+        if not any(dups_sets) or not any(missing_sets):
+            break
+
+        progress = False
 
         for i in range(n):
-            missing = np.where(parts[i] == 0)[0]
+            if not missing_sets[i]:
+                continue
 
-            for sticker in missing:
+            for sticker in list(missing_sets[i]):
                 for j in range(n):
-
-                    if i == j:
+                    if i == j or sticker not in dups_sets[j]:
                         continue
 
-                    if parts[j][sticker] > 1:
-                        parts[j][sticker] -= 1
-                        parts[i][sticker] += 1
+                    parts[j][sticker] -= 1
+                    parts[i][sticker] += 1
+                    swaps += 1
+                    progress = True
+                    missing_sets[i].remove(sticker)
+                    if parts[j][sticker] <= 1:
+                        dups_sets[j].discard(sticker)
+                    break
 
-                        swaps += 1
-                        changed = True
-                        break
+        if progress:
+            continue
+
+        triangle_found = False
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+
+                candidates_i = missing_sets[i] & dups_sets[j]
+                if not candidates_i:
+                    continue
+
+                for k in range(n):
+                    if k == i or k == j:
+                        continue
+
+                    candidates_j = missing_sets[j] & dups_sets[k]
+                    if not candidates_j:
+                        continue
+
+                    candidates_k = missing_sets[k] & dups_sets[i]
+                    if not candidates_k:
+                        continue
+
+                    sticker_ij = next(iter(candidates_i))
+                    sticker_jk = next(iter(candidates_j))
+                    sticker_ki = next(iter(candidates_k))
+
+                    parts[j][sticker_ij] -= 1
+                    parts[i][sticker_ij] += 1
+                    parts[k][sticker_jk] -= 1
+                    parts[j][sticker_jk] += 1
+                    parts[i][sticker_ki] -= 1
+                    parts[k][sticker_ki] += 1
+
+                    swaps += 3
+                    progress = True
+                    triangle_found = True
+                    break
+
+                if triangle_found:
+                    break
+
+            if triangle_found:
+                break
+
+        if not progress:
+            break
 
     return swaps
-def analytical_prob(missing, dups_avail):
-    if missing == 0: return 1.0
-    if dups_avail == 0: return 0.0
-    p = 1.0 - (1.0 - 1.0 / TOTAL) ** dups_avail
-    return p ** missing
+def analytical_prob(missing, participants):
+    if missing == 0:
+        return 1.0
+
+    p_sticker = 1 - (
+        (1 - 1 / TOTAL)
+        ** (TOTAL * (participants - 1))
+    )
+
+    return p_sticker ** missing
+
+
+def extra_packs_needed(missing):
+    if missing == 0:
+        return 0
+
+    return int(
+        np.ceil(
+            (TOTAL / PER_PACK)
+            * np.log(
+                TOTAL / (TOTAL - missing)
+            )
+        )
+    )
+
+
+def experimental_prob_curve(missing_values, participants, trials=EXP_PROB_TRIALS):
+    if participants <= 1:
+        return [1.0 if m == 0 else 0.0 for m in missing_values]
+
+    max_missing = max(missing_values)
+    draws = np.random.randint(
+        0,
+        TOTAL,
+        size=(trials, TOTAL * (participants - 1))
+    )
+    draw_sets = [set(row[row < max_missing]) for row in draws]
+    result = []
+
+    for m in missing_values:
+        if m == 0:
+            result.append(1.0)
+            continue
+
+        needed = set(range(m))
+        hits = sum(1 for s in draw_sets if needed.issubset(s))
+        result.append(hits / trials)
+
+    return result
+
 
 def simulate_one(n_part, max_rounds=None):
     parts = [np.zeros(TOTAL, dtype=np.int32) for _ in range(n_part)]
@@ -96,7 +198,7 @@ def simulate_one(n_part, max_rounds=None):
             if missing == 0:
                 continue
 
-            packs_needed = max(1, int(np.ceil(missing / PER_PACK)))
+            packs_needed = extra_packs_needed(missing)
             buy_packs(p, packs_needed)
             extra += packs_needed
 
@@ -468,25 +570,28 @@ class App(tk.Tk):
         ax.cla(); self._style_ax(ax)
         mv = np.arange(0, 301, 5)
         scenarios = [
-            (100,  C["coral"],  "D=100"),
-            (300,  C["amber"],  "D=300"),
-            (700,  C["green"],  "D=700"),
-            (1500, C["purple"], "D=1500"),
-            (3000, "#D4537E",   "D=3000"),
+            (2,  C["coral"],  "n=2"),
+            (5,  C["amber"],  "n=5"),
+            (10, C["green"],  "n=10"),
+            (20, C["purple"], "n=20"),
+            (50, "#D4537E",   "n=50"),
         ]
-        for dups, col, lbl in scenarios:
-            probs = [analytical_prob(m, dups) * 100 for m in mv]
-            ax.plot(mv, probs, color=col, linewidth=2, label=lbl)
+        for participants, col, lbl in scenarios:
+            probs = [analytical_prob(m, participants) * 100 for m in mv]
+            exp_probs = [p * 100 for p in experimental_prob_curve(mv, participants)]
+            ax.plot(mv, probs, color=col, linewidth=2, label=f"{lbl} analítica")
+            ax.plot(mv, exp_probs, color=col, linewidth=1.2, linestyle="--",
+                    alpha=0.75, label=f"{lbl} experimental")
 
         ax.axhline(50, color=C["muted"], linewidth=0.7, linestyle=":", alpha=0.7)
         ax.set_title(
-            "Probabilidad analítica de completar el álbum en una ronda\n"
-            "P(m, D) = (1 − (1−1/980)^D)^m",
+            "Probabilidad de completar el álbum en una ronda\n"
+            "Analítica vs experimental",
             color=C["text"], fontsize=9, pad=4)
         ax.set_xlabel("Cromos faltantes (m)", fontsize=8, color=C["muted"])
         ax.set_ylabel("P(completar) %", fontsize=8, color=C["muted"])
         ax.set_ylim(0, 105)
-        ax.legend(fontsize=9, framealpha=0.85)
+        ax.legend(fontsize=8, framealpha=0.85, ncol=2)
         self.fig_prob.canvas.draw()
 
 
