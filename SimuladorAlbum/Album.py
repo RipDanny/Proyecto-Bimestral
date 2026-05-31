@@ -77,47 +77,32 @@ def analytical_prob(missing, dups_avail):
     return p ** missing
 
 def simulate_one(n_part, max_rounds=None):
-
-    parts = []
-
-    for _ in range(n_part):
-        col = np.zeros(TOTAL, dtype=np.int32)
-        buy_packs(col, INIT_PACKS)
-        parts.append(col)
+    parts = [np.zeros(TOTAL, dtype=np.int32) for _ in range(n_part)]
+    for p in parts:
+        buy_packs(p, INIT_PACKS)
 
     extra_total = 0
     rounds = []
     r = 0
 
     while True:
-
         r += 1
-
         swaps = exchange_round(parts)
-
         miss_before = [get_missing(p) for p in parts]
-
         extra = 0
 
         for p in parts:
-
             missing = get_missing(p)
-
             if missing == 0:
                 continue
 
-            # Compra suficiente para seguir avanzando
             packs_needed = max(1, int(np.ceil(missing / PER_PACK)))
-
             buy_packs(p, packs_needed)
-
             extra += packs_needed
-            extra_total += packs_needed
 
+        extra_total += extra
         miss_after = [get_missing(p) for p in parts]
-
         done = sum(1 for m in miss_after if m == 0)
-
         dups_avg = np.mean([get_dups(p) for p in parts])
 
         rounds.append({
@@ -130,49 +115,19 @@ def simulate_one(n_part, max_rounds=None):
             "dups_avg": dups_avg
         })
 
-        # TODOS completaron
-        if done == n_part:
+        if done == n_part or (max_rounds is not None and r >= max_rounds):
             break
 
-        # Protección contra bucles infinitos
         if r > 500:
             break
 
     final_miss = [get_missing(p) for p in parts]
-
     return {
         "extra": extra_total,
         "rounds": rounds,
         "final_miss": final_miss,
         "done": sum(1 for m in final_miss if m == 0)
     }
-
-    extra_total = 0
-    rounds = []
-    for r in range(max_rounds):
-        swaps = exchange_round(parts)
-        extra = 0
-        miss_before = [get_missing(p) for p in parts]
-        for p in parts:
-            m = get_missing(p)
-            if m == 0: continue
-            nb = int(np.ceil(m / PER_PACK))
-            buy_packs(p, nb)
-            extra += nb
-            extra_total += nb
-        miss_after = [get_missing(p) for p in parts]
-        done = sum(1 for m in miss_after if m == 0)
-        dups_avg = np.mean([get_dups(p) for p in parts])
-        rounds.append(dict(r=r+1, extra=extra, swaps=swaps,
-                           miss_before=miss_before, miss_after=miss_after,
-                           done=done, dups_avg=dups_avg))
-        if done == n_part:
-            break
-
-    final_miss = [get_missing(p) for p in parts]
-    return dict(extra=extra_total, rounds=rounds,
-                final_miss=final_miss,
-                done=sum(1 for m in final_miss if m == 0))
 
 def simulate_many(n_part, reps, max_rounds, progress_cb=None):
     results = []
@@ -338,18 +293,15 @@ class App(tk.Tk):
         style.configure("TNotebook.Tab", font=("Segoe UI", 10), padding=[12,5])
 
         self.tab_sim  = tk.Frame(nb, bg=C["bg"])
-        self.tab_part = tk.Frame(nb, bg=C["bg"])
         self.tab_ana  = tk.Frame(nb, bg=C["bg"])
         self.tab_prob = tk.Frame(nb, bg=C["bg"])
 
-        nb.add(self.tab_sim,  text="  Simulación  ")
-        nb.add(self.tab_part, text="  Participantes  ")
-        nb.add(self.tab_ana,  text="  Análisis  ")
+        nb.add(self.tab_sim, text="  Simulación  ")
+        nb.add(self.tab_ana, text="  Análisis  ")
         nb.add(self.tab_prob, text="  Probabilidades  ")
 
         # Figuras matplotlib por tab
         self.fig_sim, self.ax_sim_bars, self.ax_sim_miss = self._make_fig_2(self.tab_sim)
-        self.fig_part, self.ax_part = self._make_fig_1(self.tab_part)
         self.fig_ana, self.ax_ana_extra, self.ax_ana_cost = self._make_fig_2(self.tab_ana)
         self.fig_prob, self.ax_prob = self._make_fig_1(self.tab_prob)
 
@@ -415,7 +367,6 @@ class App(tk.Tk):
         self.progress["value"] = 100
         self.lbl_status.config(text="✓ Completado")
         self._draw_sim_tab(r)
-        self._draw_part_tab(r)
         self._running = False
         self._set_buttons("normal")
 
@@ -484,28 +435,6 @@ class App(tk.Tk):
         ax2.set_xlabel("Participante", fontsize=8, color=C["muted"])
         ax2.set_ylabel("Faltantes", fontsize=8, color=C["muted"])
         self.fig_sim.canvas.draw()
-
-    def _draw_part_tab(self, r):
-        ax = self.ax_part
-        ax.cla(); self._style_ax(ax)
-        n = r["n"]
-        last = r["raw"][-1]
-        fm = last["final_miss"]
-        pct = [(TOTAL - m) / TOTAL * 100 for m in fm]
-        cols = [C["green"] if m == 0 else (C["amber"] if m < 50 else C["coral"]) for m in fm]
-        bars = ax.barh(range(1, n+1), pct, color=cols, alpha=0.85, height=0.6, zorder=2)
-        ax.axvline(100, color=C["green"], linewidth=1.2, linestyle="--", alpha=0.6)
-        ax.set_xlim(0, 105)
-        for bar, p, m in zip(bars, pct, fm):
-            label = "✓ Completo" if m == 0 else f"{p:.1f}%  ({m} faltan)"
-            ax.text(min(p + 0.5, 103), bar.get_y() + bar.get_height()/2,
-                    label, va="center", fontsize=7.5, color=C["text"])
-        ax.set_yticks(range(1, n+1))
-        ax.set_yticklabels([f"P{i}" for i in range(1, n+1)], fontsize=8)
-        ax.set_title(f"Progreso de completación por participante (n={n})",
-                     color=C["text"], fontsize=9, pad=4)
-        ax.set_xlabel("% del álbum completado", fontsize=8, color=C["muted"])
-        self.fig_part.canvas.draw()
 
     def _draw_ana_tab(self, data):
         ns    = [d["n"]      for d in data]
