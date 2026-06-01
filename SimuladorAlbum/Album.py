@@ -314,7 +314,7 @@ class App(tk.Tk):
         sep.pack(fill="x", padx=12, pady=(0, 6))
         return parent
 
-    def _slider_row(self, parent, label, from_, to, init, step=1):
+    def _slider_row(self, parent, label, from_, to, init, step=1, on_change=None):
         row = tk.Frame(parent, bg=C["panel"])
         row.pack(fill="x", padx=14, pady=3)
         tk.Label(row, text=label, bg=C["panel"], fg=C["text"],
@@ -323,9 +323,15 @@ class App(tk.Tk):
         val_lbl = tk.Label(row, textvariable=var, bg=C["panel"], fg=C["green"],
                            font=("Segoe UI", 9, "bold"), width=4)
         val_lbl.pack(side="right")
+
+        def on_slide(v, vv=var):
+            vv.set(round(float(v)))
+            if on_change:
+                on_change()
+
         sl = ttk.Scale(row, from_=from_, to=to, variable=var,
                        orient="horizontal", length=110,
-                       command=lambda v, vv=var: vv.set(round(float(v))))
+                       command=on_slide)
         sl.pack(side="right", padx=4)
         return var
 
@@ -345,7 +351,7 @@ class App(tk.Tk):
                  font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=14, pady=(14,2))
         tk.Frame(parent, bg=C["border"], height=1).pack(fill="x", padx=12, pady=(0,6))
 
-        self.v_n    = self._slider_row(parent, "Participantes", 1, 50, 5)
+        self.v_n    = self._slider_row(parent, "Participantes", 1, 50, 5, on_change=self._draw_prob_tab)
         self.v_reps = self._slider_row(parent, "Repeticiones",  1, 30, 8)
         self.v_rnd  = self._slider_row(parent, "Rondas máx",   3, 20, 12)
 
@@ -441,6 +447,7 @@ class App(tk.Tk):
         n    = self.v_n.get()
         reps = self.v_reps.get()
         rnds = self.v_rnd.get()
+        self._draw_prob_tab(n)
         self._running = True
         self._set_buttons("disabled")
         self.lbl_status.config(text="Simulando...")
@@ -469,6 +476,7 @@ class App(tk.Tk):
         self.progress["value"] = 100
         self.lbl_status.config(text="✓ Completado")
         self._draw_sim_tab(r)
+        self._draw_prob_tab()
         self._running = False
         self._set_buttons("normal")
 
@@ -496,6 +504,7 @@ class App(tk.Tk):
 
     def _finish_analysis(self):
         self._draw_ana_tab(self._analysis_data)
+        self._draw_prob_tab()
         self.progress["value"] = 100
         self.lbl_status.config(text="✓ Análisis completo")
         self._running = False
@@ -565,33 +574,28 @@ class App(tk.Tk):
         ax2.legend(fontsize=8)
         self.fig_ana.canvas.draw()
 
-    def _draw_prob_tab(self):
+    def _draw_prob_tab(self, participants=None):
         ax = self.ax_prob
         ax.cla(); self._style_ax(ax)
+        if participants is None:
+            participants = self.v_n.get()
+
         mv = np.arange(0, 301, 5)
-        scenarios = [
-            (2,  C["coral"],  "n=2"),
-            (5,  C["amber"],  "n=5"),
-            (10, C["green"],  "n=10"),
-            (20, C["purple"], "n=20"),
-            (50, "#D4537E",   "n=50"),
-        ]
-        for participants, col, lbl in scenarios:
-            probs = [analytical_prob(m, participants) * 100 for m in mv]
-            exp_probs = [p * 100 for p in experimental_prob_curve(mv, participants)]
-            ax.plot(mv, probs, color=col, linewidth=2, label=f"{lbl} analítica")
-            ax.plot(mv, exp_probs, color=col, linewidth=1.2, linestyle="--",
-                    alpha=0.75, label=f"{lbl} experimental")
+        probs = [analytical_prob(m, participants) * 100 for m in mv]
+        exp_probs = [p * 100 for p in experimental_prob_curve(mv, participants)]
+        ax.plot(mv, probs, color=C["green"], linewidth=2, label=f"n={participants} analítica")
+        ax.plot(mv, exp_probs, color=C["purple"], linewidth=1.8, linestyle="--",
+                alpha=0.85, label=f"n={participants} experimental")
 
         ax.axhline(50, color=C["muted"], linewidth=0.7, linestyle=":", alpha=0.7)
         ax.set_title(
-            "Probabilidad de completar el álbum en una ronda\n"
+            f"Probabilidad de completar el álbum en una ronda — n={participants}\n"
             "Analítica vs experimental",
             color=C["text"], fontsize=9, pad=4)
         ax.set_xlabel("Cromos faltantes (m)", fontsize=8, color=C["muted"])
         ax.set_ylabel("P(completar) %", fontsize=8, color=C["muted"])
         ax.set_ylim(0, 105)
-        ax.legend(fontsize=8, framealpha=0.85, ncol=2)
+        ax.legend(fontsize=8, framealpha=0.85)
         self.fig_prob.canvas.draw()
 
 
