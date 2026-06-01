@@ -53,5 +53,5 @@ Determinar el número promedio de fundas adicionales necesarias para completar e
 * Eduardo Verdezoto
 
 
-##Gif
+## Gif
 https://github.com/user-attachments/assets/729b36fa-542e-479d-88c1-e2070612174a
